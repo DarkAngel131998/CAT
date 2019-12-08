@@ -1,0 +1,400 @@
+﻿using System;
+using System.Collections.Generic;
+using System.IdentityModel.Tokens.Jwt;
+using System.Linq;
+using System.Net.Http;
+using System.Security.Claims;
+using System.Text;
+using System.Threading.Tasks;
+using CAT.Models;
+using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Identity;
+using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Options;
+using Microsoft.IdentityModel.Tokens;
+using Newtonsoft.Json;
+using Newtonsoft.Json.Linq;
+
+// For more information on enabling Web API for empty projects, visit https://go.microsoft.com/fwlink/?LinkID=397860
+
+namespace CAT.Controllers
+{
+    [Route("api/[controller]")]
+    public class UsersController : Controller
+    {
+        private readonly DBContext _context;
+        private readonly AppSettings _appSettings;
+        private readonly UserManager<User> _userManager;
+        public const double e = 2.71828;
+
+        public UsersController(IOptions<AppSettings> appSettings, UserManager<User> userManager, DBContext context)
+        {
+            _appSettings = appSettings.Value;
+            _userManager = userManager;
+            _context = context;
+        }
+
+        // GET: api/<controller>
+        [HttpPost, Route("[action]")]
+        public async Task<ActionResult<AuthenToken>> Login(GoogleToken ggToken)
+        {
+            
+            var token = new JwtSecurityToken();
+            var result = new AuthenToken();
+            using var http = new HttpClient();
+            var url = $"https://www.googleapis.com/oauth2/v1/userinfo?alt=json&access_token={ggToken.Token}";
+            var stringData = (await http.GetStringAsync(url));
+            var data = JsonConvert.DeserializeObject<GoogleUser>(stringData);
+            var user = await _userManager.FindByEmailAsync(data.Email);
+            if (user == null)
+            {
+                var user1 = new User
+                {
+                    Id = Guid.NewGuid().ToString(),
+                    UserName = data.Email,
+                    Email = data.Email,
+                    FullName = data.Name
+                };
+
+                var Password = "123abcXyz_";
+                var register = await _userManager.CreateAsync(user1, Password);
+                if (!register.Succeeded)
+                {
+                    foreach (var item in register.Errors)
+                    {
+                        ModelState.AddModelError(item.Code, item.Description);
+                    }
+                    return BadRequest(ModelState);
+                }
+
+                var user2 = await _userManager.FindByEmailAsync(data.Email);
+                token = GenToken(user2);
+                result = new AuthenToken
+                {
+                    Id = user2.Id,
+                    AuthToken = token.RawData,
+                    UesrName = user2.FullName
+                    
+                };
+            }
+            else
+            {
+                token = GenToken(user);
+                result = new AuthenToken
+                {
+                    Id = user.Id,
+                    AuthToken = token.RawData
+                };
+            }
+            return Ok(result);
+        }
+
+        // GET api/<controller>/5
+        [HttpGet, Route("[action]")]
+        [Authorize]
+        public async Task<ActionResult<QuestionViewModel>> ContinueExam()
+        {
+            var user = await _userManager.GetUserAsync(User);
+            if (user == null)
+            {
+                return NotFound();
+            }
+
+            Exam data = await _context.Exam
+                .Where(x => x.UserID == user.Id && x.EndDate > DateTime.Now && x.Finished == false)
+                .Select(x => x).FirstOrDefaultAsync();
+            var ListId = data.QuestionID.Split(',').Select(Int32.Parse).ToList();
+            var QuestionId = ListId[ListId.Count() - 1];
+
+            var ContentQuestion = await _context.Questions
+                .Where(x => x.ID == QuestionId)
+                .Select(x => x.Content).FirstOrDefaultAsync();
+
+            List<AnswerViewModel> Answers = await _context.Answers
+                .Where(x => x.QuestionID == QuestionId)
+                .Select(x => new AnswerViewModel { IdAnswer = x.ID, ContentAnswer = x.Content }).ToListAsync();
+
+            var result = new QuestionViewModel
+            {
+                IdQuestion = QuestionId,
+                ContentQuestion = ContentQuestion,
+                IdExam = data.ID,
+                Answers = Answers,
+                Finished = false,
+                EndDate = data.EndDate
+            };
+            return result;
+        }
+        public IActionResult Get(int id)
+        {
+            var user = new User
+            {
+                Id = Guid.NewGuid().ToString(),
+                Email = "cam@gmail.com"
+            };
+            
+            var token = GenToken(user);
+            var result = new AuthenToken
+            {
+                Id = user.Id,
+                AuthToken = token.RawData
+            };
+            return Ok(result);
+        }
+
+        // POST api/<controller>
+        [HttpPost, Route("[action]")]
+        [Authorize]
+        public async Task<ActionResult<QuestionViewModel>> BeginDoTest(LevelModel LevelChoose)
+        {
+            var user = await _userManager.GetUserAsync(User);
+            if (user == null)
+            {
+                return NotFound();
+            }
+            TimeSpan aInterval = new System.TimeSpan(0, 0, 45, 0);
+            Exam data = new Exam
+            {
+                UserID = user.Id,
+                StartDate = DateTime.Now,
+                EndDate = DateTime.Now.Add(aInterval),
+                Finished = false
+            };
+            Double theta = 0;
+            if (LevelChoose.Level == 1)
+                theta = 2.0;
+            else if (LevelChoose.Level == 2)
+                theta = 5.0;
+            else
+                theta = 8.0;
+            var listQuestion = await _context.Questions.ToListAsync();
+            var nextQuestion = GetNewQuestion(theta, 1.0, 0, 0, listQuestion, true);
+
+            data.Theta = theta;
+            data.SE = 1.0;
+            data.SumI = 0;
+            data.SumS = 0;
+            data.QuestionID = nextQuestion.IdQuestion.ToString();
+            _context.Exam.Add(data);
+            await _context.SaveChangesAsync();
+
+            Exam data1 = await _context.Exam
+                .Where(x => x.UserID == user.Id && x.EndDate > DateTime.Now && x.Finished == false)
+                .Select(x => x).FirstOrDefaultAsync();
+
+            var ContentQuestion = await _context.Questions
+               .Where(x => x.ID == nextQuestion.IdQuestion)
+               .Select(x => x.Content).FirstOrDefaultAsync();
+
+            List<AnswerViewModel> Answers = await _context.Answers
+                .Where(x => x.QuestionID == nextQuestion.IdQuestion)
+                .Select(x => new AnswerViewModel { IdAnswer = x.ID, ContentAnswer = x.Content }).ToListAsync();
+
+            var result = new QuestionViewModel
+            {
+                IdQuestion = nextQuestion.IdQuestion,
+                ContentQuestion = ContentQuestion,
+                IdExam = data1.ID,
+                Answers = Answers,
+                Finished = false,
+                EndDate = data.EndDate
+            };
+            return result;
+            /*double SE = 1.0;
+            double StopCre = 6.0;
+            
+                
+            if((SE + theta) > StopCre)
+            {
+                List<double> Pi = new List<double>();
+                List<double> Ii = new List<double>();
+                foreach (var question in listQuestion)
+                {
+                    double pi1 = question.c + (1 - question.c) * (double)((double)Math.Pow(e, (question.a * (theta - question.b))) / (1 + (double)Math.Pow(e, (question.a * (theta - question.b)))));
+                    Pi.Add(pi1);
+                    double ii = (question.a*question.a)*(double)(((pi1 - question.c)*(pi1 - question.c))/((1 - question.c)*(1 - question.c)))*(double)((1-pi1)/ pi1);
+                    Ii.Add(ii);
+                }
+                double nextQuestion = Ii.Max();
+                double Sum_I = nextQuestion;
+                double u = 0;
+                if (true)
+                {
+                    u = 1.0;
+                }
+                int index = Ii.IndexOf(nextQuestion);
+                double pNeed = Pi[index];
+                Questions questTion = listQuestion[index];
+                double Si = (double)((questTion.a * (pNeed - questTion.c) * (u - pNeed)) / ((1 - questTion.c) * pNeed));
+                double Sum_S = Si;
+                theta = theta + (double)(Sum_S / Sum_I);
+                SE = (double)(1 / Math.Sqrt(Sum_I));
+
+
+                
+            }*/
+        }
+        [HttpPost, Route("[action]")]
+        [Authorize]
+        public async Task<ActionResult<QuestionViewModel>> GetNextQuestion(AnswerPostModel answerPost)
+        {
+            var user = await _userManager.GetUserAsync(User);
+            if (user == null)
+            {
+                return NotFound();
+            }
+            Boolean rightAnswer = false;
+            Exam exam = await _context.Exam.FindAsync(answerPost.ExamId);
+            if(exam.EndDate < DateTime.Now)
+            {
+                exam.Finished = true;
+                var resultTimeOut = new QuestionViewModel
+                {
+                    Finished = true
+                };
+                return resultTimeOut;
+            }
+            Answers answers = await _context.Answers.FindAsync(answerPost.AnswerId);
+            if (answers.RightAnswer == true)
+                rightAnswer = true;
+            var ListIdAnsweredQuestion = exam.QuestionID.Split(',').Select(Int32.Parse).ToList();
+            var listNewQuestion = await _context.Questions.Where(x => !ListIdAnsweredQuestion.Contains(x.ID)).ToListAsync();
+            AlgorithmModel nextQuestion = new AlgorithmModel();
+            if(ListIdAnsweredQuestion.Count == 1)
+            {
+                nextQuestion = GetNewQuestion(exam.Theta, exam.SE, exam.SumI, exam.SumS, listNewQuestion, rightAnswer);
+                nextQuestion.theta += 0.25;
+            }
+            else
+            {
+                if(exam.StatusPreviousAnswer == rightAnswer)
+                {
+                    nextQuestion = GetNewQuestion(exam.Theta, exam.SE, exam.SumI, exam.SumS, listNewQuestion, rightAnswer);
+                    if (rightAnswer == true)
+                        nextQuestion.theta += 0.25;
+                    else
+                        nextQuestion.theta -= 0.25;
+                }
+                else
+                {
+                    nextQuestion = GetNewQuestion(exam.Theta, exam.SE, exam.SumI, exam.SumS, listNewQuestion, rightAnswer);
+                }
+            }
+
+            if (nextQuestion.IdQuestion == -1)
+            {
+                exam.Finished = true;
+                var resultFinish = new QuestionViewModel
+                {
+                    Finished = true
+                };
+                return resultFinish;
+            }
+
+            exam.Theta = nextQuestion.theta;
+            exam.SE = nextQuestion.SE;
+            exam.SumI = nextQuestion.Sum_I;
+            exam.SumS = nextQuestion.Sum_S;
+            exam.QuestionID += "," + nextQuestion.IdQuestion.ToString();
+            _context.Entry(exam).State = EntityState.Modified;
+            await _context.SaveChangesAsync();
+
+            var ContentQuestion = await _context.Questions
+              .Where(x => x.ID == nextQuestion.IdQuestion)
+              .Select(x => x.Content).FirstOrDefaultAsync();
+
+            List<AnswerViewModel> Answers = await _context.Answers
+                .Where(x => x.QuestionID == nextQuestion.IdQuestion)
+                .Select(x => new AnswerViewModel { IdAnswer = x.ID, ContentAnswer = x.Content }).ToListAsync();
+
+            var result = new QuestionViewModel
+            {
+                IdQuestion = nextQuestion.IdQuestion,
+                ContentQuestion = ContentQuestion,
+                IdExam = exam.ID,
+                Answers = Answers,
+                Finished = false,
+                EndDate = exam.EndDate
+            };
+            return result;
+
+        }
+
+        // PUT api/<controller>/5
+        [HttpPut("{id}")]
+        public void Put(int id, [FromBody]string value)
+        {
+        }
+
+        // DELETE api/<controller>/5
+        [HttpDelete("{id}")]
+        public void Delete(int id)
+        {
+        }
+
+
+        private JwtSecurityToken GenToken(User user)
+        {
+            // authentication successful so generate jwt token
+            var tokenHandler = new JwtSecurityTokenHandler();
+            var key = Encoding.ASCII.GetBytes(_appSettings.Secret);
+            var tokenDescriptor = new SecurityTokenDescriptor
+            {
+                Subject = new ClaimsIdentity(new Claim[]
+                {
+                    new Claim(ClaimTypes.NameIdentifier, user.Id),
+                    new Claim(ClaimTypes.Email, user.Email)
+                }),
+                Issuer = "https://localhost:5001",
+                Audience = "api",
+                Expires = DateTime.UtcNow.AddDays(7),
+                SigningCredentials = new SigningCredentials(new SymmetricSecurityKey(key), SecurityAlgorithms.HmacSha256Signature)
+            };
+            var token = tokenHandler.CreateToken(tokenDescriptor);
+            return token as JwtSecurityToken;
+        }
+
+        private AlgorithmModel GetNewQuestion(double theta,double SE,double Sum_I,double Sum_S,List<Questions> listQuestion,Boolean continued)
+        {
+            Questions questions = new Questions();
+            if ((SE + theta) <= 6.0)
+            {
+                List<double> Pi = new List<double>();
+                List<double> Ii = new List<double>();
+                foreach (var question in listQuestion)
+                {
+                    double pi1 = question.c + (1 - question.c) * (double)((double)Math.Pow(e, (question.a * (theta - question.b))) / (1 + (double)Math.Pow(e, (question.a * (theta - question.b)))));
+                    Pi.Add(pi1);
+                    double ii = (question.a * question.a) * (double)(((pi1 - question.c) * (pi1 - question.c)) / ((1 - question.c) * (1 - question.c))) * (double)((1 - pi1) / pi1);
+                    Ii.Add(ii);
+                }
+                double nextQuestion = Ii.Max();
+                Sum_I += nextQuestion;
+                int index = Ii.IndexOf(nextQuestion);
+                double pNeed = Pi[index];
+                questions = listQuestion[index];
+                double u = 0;
+                if (continued)
+                {
+                    u = 1.0;
+                }
+                double Si = (double)((questions.a * (pNeed - questions.c) * (u - pNeed)) / ((1 - questions.c) * pNeed));
+                Sum_S += Si;
+                theta = theta + (double)(Sum_S / Sum_I);
+                SE = (double)(1 / Math.Sqrt(Sum_I));
+            }
+            else
+                questions.ID = -1;
+            var result = new AlgorithmModel
+            {
+                theta = theta,
+                SE = SE,
+                Sum_I = Sum_I,
+                Sum_S = Sum_S,
+                IdQuestion = questions.ID
+            };
+            return result;
+        }
+    }
+}
