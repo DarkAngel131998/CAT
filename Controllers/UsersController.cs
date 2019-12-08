@@ -336,7 +336,7 @@ namespace CAT.Controllers
             var answers = await _context.Answers
                 .Where(x => x.QuestionID == nextQuestion.IdQuestion)
                 .Select(x => new AnswerViewModel { IdAnswer = x.ID, ContentAnswer = x.Content }).ToListAsync();
-
+            var ab = 0;
             var result = new QuestionViewModel
             {
                 QuestionStt = listIdAnsweredQuestion.Count() + 1,
