@@ -14,6 +14,7 @@ namespace CAT.Models
         public List<AnswerViewModel> Answers { get; set; }
         public string Finished { get; set; }
         public long EndDate { get; set; }
+        public double grade { get; set; }
 
     }
 

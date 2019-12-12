@@ -12,6 +12,7 @@ namespace CAT.Models
         [Key]
         public int ID { get; set; }
         public string Content { get; set; }
+        [Range(-3, 3)]
         public double a { get; set; }
         public double b { get; set; }
         public double c { get; set; }

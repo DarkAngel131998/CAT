@@ -12,5 +12,6 @@ namespace CAT.Models
         public double SumS { get; set; }
         public double SE { get; set; }
         public int IdQuestion { get; set; }
+        public bool finished { get; set; }
     }
 }

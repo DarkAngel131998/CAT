@@ -112,6 +112,21 @@ namespace CAT.Controllers
             };
             return Ok(result);
         }
+        [HttpGet, Route("[action]")]
+        [Authorize]
+        public async Task<ActionResult<IEnumerable<Result>>> GetResult()
+        {
+            var user = await _userManager.GetUserAsync(User);
+            if (user == null)
+            {
+                return NotFound();
+            }
+            var result = await _context.Exam
+                    .Where(x => x.UserID == user.Id)
+                    .Select(x => new Result { StartDate = new DateTimeOffset(x.StartDate).ToUnixTimeMilliseconds(), Grade = x.Theta }).ToListAsync();
+           
+            return Ok(result);
+        }
 
         // GET api/<controller>/5
         [HttpGet, Route("[action]")]
@@ -172,22 +187,39 @@ namespace CAT.Controllers
                 EndDate = DateTime.Now.Add(aInterval),
                 Finished = false
             };
-
+            Random rnd = new Random();
+            var listQuestion = new List<Questions>();
+            var nextQuestion = new Questions();
             var theta = 0.0;
             if (levelChoose.Level == 1)
-                theta = 2.0;
+            {
+                theta = 0.5;
+                listQuestion = await _context.Questions.Where(x =>  x.b < (-0.5)).ToListAsync();
+                var index = rnd.Next(0, listQuestion.Count);
+                nextQuestion = listQuestion[index];
+            }
+                
             else if (levelChoose.Level == 2)
-                theta = 5.0;
+            {
+                theta = 1.5;
+                listQuestion = await _context.Questions.Where(x => x.b > (-0.4) && x.b < (1.5)).ToListAsync();
+                var index = rnd.Next(0, listQuestion.Count);
+                nextQuestion = listQuestion[index];
+            }
             else
-                theta = 8.0;
-            var listQuestion = await _context.Questions.ToListAsync();
-            var nextQuestion = GetNewQuestion(theta, 1.0, 0, 0, listQuestion, true,4);
+            {
+                theta = 2.5;
+                listQuestion = await _context.Questions.Where(x => x.b > (1.6)).ToListAsync();
+                var index = rnd.Next(0, listQuestion.Count);
+                nextQuestion = listQuestion[index];
+            }
+            
 
             data.Theta = theta;
             data.SE = 1.0;
-            data.SumI = 0;
+            data.SumI = 1.0;
             data.SumS = 0;
-            data.QuestionID = nextQuestion.IdQuestion.ToString();
+            data.QuestionID = nextQuestion.ID.ToString();
 
             _context.Exam.Add(data);
             await _context.SaveChangesAsync();
@@ -196,18 +228,16 @@ namespace CAT.Controllers
                 .Where(x => x.UserID == user.Id && x.EndDate > DateTime.Now && x.Finished == false)
                 .Select(x => x).FirstOrDefaultAsync();
 
-            var contentQuestion = await _context.Questions
-               .Where(x => x.ID == nextQuestion.IdQuestion)
-               .Select(x => x.Content).FirstOrDefaultAsync();
+            var contentQuestion = nextQuestion.Content;
 
             var answers = await _context.Answers
-                .Where(x => x.QuestionID == nextQuestion.IdQuestion)
+                .Where(x => x.QuestionID == nextQuestion.ID)
                 .Select(x => new AnswerViewModel { IdAnswer = x.ID, ContentAnswer = x.Content }).ToListAsync();
 
             var result = new QuestionViewModel
             {
                 QuestionStt = 1,
-                IdQuestion = nextQuestion.IdQuestion,
+                IdQuestion = nextQuestion.ID,
                 ContentQuestion = contentQuestion,
                 IdExam = data1.ID,
                 Answers = answers,
@@ -215,39 +245,7 @@ namespace CAT.Controllers
                 EndDate = new DateTimeOffset(data.EndDate).ToUnixTimeMilliseconds()
             };
             return result;
-            /*double SE = 1.0;
-            double StopCre = 6.0;
             
-                
-            if((SE + theta) > StopCre)
-            {
-                List<double> Pi = new List<double>();
-                List<double> Ii = new List<double>();
-                foreach (var question in listQuestion)
-                {
-                    double pi1 = question.c + (1 - question.c) * (double)((double)Math.Pow(e, (question.a * (theta - question.b))) / (1 + (double)Math.Pow(e, (question.a * (theta - question.b)))));
-                    Pi.Add(pi1);
-                    double ii = (question.a*question.a)*(double)(((pi1 - question.c)*(pi1 - question.c))/((1 - question.c)*(1 - question.c)))*(double)((1-pi1)/ pi1);
-                    Ii.Add(ii);
-                }
-                double nextQuestion = Ii.Max();
-                double Sum_I = nextQuestion;
-                double u = 0;
-                if (true)
-                {
-                    u = 1.0;
-                }
-                int index = Ii.IndexOf(nextQuestion);
-                double pNeed = Pi[index];
-                Questions questTion = listQuestion[index];
-                double Si = (double)((questTion.a * (pNeed - questTion.c) * (u - pNeed)) / ((1 - questTion.c) * pNeed));
-                double Sum_S = Si;
-                theta = theta + (double)(Sum_S / Sum_I);
-                SE = (double)(1 / Math.Sqrt(Sum_I));
-
-
-                
-            }*/
         }
         [HttpPost, Route("[action]")]
         [Authorize]
@@ -300,14 +298,16 @@ namespace CAT.Controllers
                 }
             }
 
-            if (nextQuestion.IdQuestion == -1)
+            if (nextQuestion.finished)
             {
                 exam.Finished = true;
                 _context.Entry(exam).State = EntityState.Modified;
                 await _context.SaveChangesAsync();
+
                 var resultFinish = new QuestionViewModel
                 {
-                    Finished = "complete"
+                    Finished = "complete",
+                    grade = exam.Theta
                 };
                 return resultFinish;
             }
@@ -315,7 +315,8 @@ namespace CAT.Controllers
             {
                 var resultTimeOut = new QuestionViewModel
                 {
-                    Finished = "notvalue"
+                    Finished = "notvalue",
+                    grade = exam.Theta
                 };
                 return resultTimeOut;
             }
@@ -374,6 +375,7 @@ namespace CAT.Controllers
         private AlgorithmModel GetNewQuestion(double theta, double SE, double SumI, double SumS, List<Questions> listQuestion, bool answerRight,int continued)
         {
             var questions = new Questions();
+            bool finished = false;
             
             var Pi = new List<double>();
             var Ii = new List<double>();
@@ -409,9 +411,9 @@ namespace CAT.Controllers
                     break;
             }
             SE = 1 / Math.Sqrt(SumI);
-            if ((SE + theta) < 1.0 || SE < 0.5)
+            if ((SE + theta) < 1.0 || SE < 0.3)
             {
-                questions.ID = -1;
+                finished = true;
             }
             
             
@@ -421,7 +423,8 @@ namespace CAT.Controllers
                 SE = SE,
                 SumI = SumI,
                 SumS = SumS,
-                IdQuestion = questions.ID
+                IdQuestion = questions.ID,
+                finished = finished
             };
             return result;
         }
