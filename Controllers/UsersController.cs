@@ -258,6 +258,11 @@ namespace CAT.Controllers
             }
 
             var rightAnswer = false;
+            var ContentQuestion = "";
+
+            var answers = new List<AnswerViewModel>();
+
+            var result = new QuestionViewModel();
             var exam = await _context.Exam.FindAsync(answerPost.ExamId);
 
             if(exam.EndDate < DateTime.Now)
@@ -275,79 +280,146 @@ namespace CAT.Controllers
             var listIdAnsweredQuestion = exam.QuestionID.Split(',').Select(int.Parse);
             var listNewQuestion = await _context.Questions.Where(x => !listIdAnsweredQuestion.Contains(x.ID)).ToListAsync();
 
-            var nextQuestion = new AlgorithmModel();
-            if (listNewQuestion == null)
-                return NoContent();
-            if(listIdAnsweredQuestion.Count() == 1)
+            Random rnd = new Random();
+            var listQuestion = new List<Questions>();
+            var nextQuestion = new Questions();
+            if (exam.Theta < 1)
             {
-                nextQuestion = GetNewQuestion(exam.Theta, exam.SE, exam.SumI, exam.SumS, listNewQuestion, rightAnswer,2);
+                listQuestion = await _context.Questions.Where(x => x.b < (-0.5) && !listIdAnsweredQuestion.Contains(x.ID)).ToListAsync();
+                var index = rnd.Next(0, listQuestion.Count);
+                nextQuestion = listQuestion[index];
+            }
+
+            else if (exam.Theta >= 1 && exam.Theta <2)
+            {
+                listQuestion = await _context.Questions.Where(x => x.b > (-0.4) && x.b < (1.5) && !listIdAnsweredQuestion.Contains(x.ID)).ToListAsync();
+                var index = rnd.Next(0, listQuestion.Count);
+                nextQuestion = listQuestion[index];
             }
             else
             {
-                if(exam.StatusPreviousAnswer == rightAnswer)
-                {
-                    
-                    if (rightAnswer == true)
-                        nextQuestion = GetNewQuestion(exam.Theta, exam.SE, exam.SumI, exam.SumS, listNewQuestion, rightAnswer, 2);
-                    else
-                        nextQuestion = GetNewQuestion(exam.Theta, exam.SE, exam.SumI, exam.SumS, listNewQuestion, rightAnswer, 3);
-                }
-                else
-                {
-                    nextQuestion = GetNewQuestion(exam.Theta, exam.SE, exam.SumI, exam.SumS, listNewQuestion, rightAnswer,1);
-                }
+                listQuestion = await _context.Questions.Where(x => x.b > (1.6) && !listIdAnsweredQuestion.Contains(x.ID)).ToListAsync();
+                var index = rnd.Next(0, listQuestion.Count);
+                nextQuestion = listQuestion[index];
             }
 
-            if (nextQuestion.finished)
+            if (listNewQuestion == null ||nextQuestion == null)
+                return NoContent();
+            if(listIdAnsweredQuestion.Count() == 1 || exam.StatusPreviousAnswer == rightAnswer)
             {
-                exam.Finished = true;
+                if (rightAnswer == true)
+                    exam.Theta += 0.15;
+                else
+                    exam.Theta -= 0.15;
+
+                if (exam.Theta >= 4 || (exam.Theta + exam.SE) < 1)
+                {
+                    exam.Finished = true;
+                    _context.Entry(exam).State = EntityState.Modified;
+                    await _context.SaveChangesAsync();
+
+                    var resultFinish = new QuestionViewModel
+                    {
+                        Finished = "complete",
+                        grade = exam.Theta
+                    };
+                    return resultFinish;
+                }
+                if (listIdAnsweredQuestion.Count() == 30)
+                {
+                    exam.Finished = true;
+                    _context.Entry(exam).State = EntityState.Modified;
+
+                    var resultNoQuestion = new QuestionViewModel
+                    {
+                        Finished = "notvalue",
+                        grade = exam.Theta
+                    };
+                    return resultNoQuestion;
+                }
+
+                exam.QuestionID += "," + nextQuestion.ID.ToString();
+                exam.StatusPreviousAnswer = rightAnswer;
                 _context.Entry(exam).State = EntityState.Modified;
                 await _context.SaveChangesAsync();
 
-                var resultFinish = new QuestionViewModel
+                ContentQuestion = nextQuestion.Content;
+
+                answers = await _context.Answers
+                    .Where(x => x.QuestionID == nextQuestion.ID)
+                    .Select(x => new AnswerViewModel { IdAnswer = x.ID, ContentAnswer = x.Content }).ToListAsync();
+
+                result = new QuestionViewModel
                 {
-                    Finished = "complete",
-                    grade = exam.Theta
+                    QuestionStt = listIdAnsweredQuestion.Count() + 1,
+                    IdQuestion = nextQuestion.ID,
+                    ContentQuestion = ContentQuestion,
+                    IdExam = exam.ID,
+                    Answers = answers,
+                    Finished = "cont",
+                    EndDate = new DateTimeOffset(exam.EndDate).ToUnixTimeMilliseconds()
                 };
-                return resultFinish;
+                return result;
+
             }
-            if(listIdAnsweredQuestion.Count() == 30)
+            else
             {
-                var resultTimeOut = new QuestionViewModel
+                
+                var nextQuestions = GetNewQuestion(exam.Theta, exam.SE, exam.SumI, exam.SumS, listNewQuestion, rightAnswer);
+                if (nextQuestions.finished)
                 {
-                    Finished = "notvalue",
-                    grade = exam.Theta
+                    exam.Finished = true;
+                    _context.Entry(exam).State = EntityState.Modified;
+                    await _context.SaveChangesAsync();
+
+                    var resultFinish = new QuestionViewModel
+                    {
+                        Finished = "complete",
+                        grade = exam.Theta
+                    };
+                    return resultFinish;
+                }
+                if (listIdAnsweredQuestion.Count() == 30)
+                {
+                    var resultNoQuestion = new QuestionViewModel
+                    {
+                        Finished = "notvalue",
+                        grade = exam.Theta
+                    };
+                    return resultNoQuestion;
+                }
+
+                exam.Theta = nextQuestions.Theta;
+                exam.SE = nextQuestions.SE;
+                exam.SumI = nextQuestions.SumI;
+                exam.SumS = nextQuestions.SumS;
+                exam.QuestionID += "," + nextQuestions.IdQuestion.ToString();
+                exam.StatusPreviousAnswer = rightAnswer;
+                _context.Entry(exam).State = EntityState.Modified;
+                await _context.SaveChangesAsync();
+
+                ContentQuestion = await _context.Questions
+                  .Where(x => x.ID == nextQuestions.IdQuestion)
+                  .Select(x => x.Content).FirstOrDefaultAsync();
+
+                answers = await _context.Answers
+                    .Where(x => x.QuestionID == nextQuestions.IdQuestion)
+                    .Select(x => new AnswerViewModel { IdAnswer = x.ID, ContentAnswer = x.Content }).ToListAsync();
+
+                result = new QuestionViewModel
+                {
+                    QuestionStt = listIdAnsweredQuestion.Count() + 1,
+                    IdQuestion = nextQuestions.IdQuestion,
+                    ContentQuestion = ContentQuestion,
+                    IdExam = exam.ID,
+                    Answers = answers,
+                    Finished = "cont",
+                    EndDate = new DateTimeOffset(exam.EndDate).ToUnixTimeMilliseconds()
                 };
-                return resultTimeOut;
+                return result;
             }
 
-            exam.Theta = nextQuestion.Theta;
-            exam.SE = nextQuestion.SE;
-            exam.SumI = nextQuestion.SumI;
-            exam.SumS = nextQuestion.SumS;
-            exam.QuestionID += "," + nextQuestion.IdQuestion.ToString();
-            exam.StatusPreviousAnswer = rightAnswer;
-            _context.Entry(exam).State = EntityState.Modified;
-            await _context.SaveChangesAsync();
-
-            var ContentQuestion = await _context.Questions
-              .Where(x => x.ID == nextQuestion.IdQuestion)
-              .Select(x => x.Content).FirstOrDefaultAsync();
-
-            var answers = await _context.Answers
-                .Where(x => x.QuestionID == nextQuestion.IdQuestion)
-                .Select(x => new AnswerViewModel { IdAnswer = x.ID, ContentAnswer = x.Content }).ToListAsync();
-            var result = new QuestionViewModel
-            {
-                QuestionStt = listIdAnsweredQuestion.Count() + 1,
-                IdQuestion = nextQuestion.IdQuestion,
-                ContentQuestion = ContentQuestion,
-                IdExam = exam.ID,
-                Answers = answers,
-                Finished = "cont",
-                EndDate = new DateTimeOffset(exam.EndDate).ToUnixTimeMilliseconds()
-            };
-            return result;
+            
 
         }
 
@@ -372,7 +444,7 @@ namespace CAT.Controllers
             return token as JwtSecurityToken;
         }
 
-        private AlgorithmModel GetNewQuestion(double theta, double SE, double SumI, double SumS, List<Questions> listQuestion, bool answerRight,int continued)
+        private AlgorithmModel GetNewQuestion(double theta, double SE, double SumI, double SumS, List<Questions> listQuestion, bool answerRight)
         {
             var questions = new Questions();
             bool finished = false;
@@ -398,20 +470,10 @@ namespace CAT.Controllers
             }
             var Si = (questions.a * (pNeed - questions.c) * (u - pNeed)) / ((1 - questions.c) * pNeed);
             SumS += Si;
-            switch (continued)
-            {
-                case 1:
-                    theta += (SumS / SumI);
-                    break;
-                case 2:
-                    theta += 0.25;
-                    break;
-                case 3:
-                    theta -= 0.25;
-                    break;
-            }
+            theta += (SumS / SumI);
+                    
             SE = 1 / Math.Sqrt(SumI);
-            if ((SE + theta) < 1.0 || SE < 0.3)
+            if ((SE + theta) < 1.0 || SE < 0.3 || theta > 4)
             {
                 finished = true;
             }
