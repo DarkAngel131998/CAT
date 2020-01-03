@@ -280,33 +280,33 @@ namespace CAT.Controllers
             var listIdAnsweredQuestion = exam.QuestionID.Split(',').Select(int.Parse);
             var listNewQuestion = await _context.Questions.Where(x => !listIdAnsweredQuestion.Contains(x.ID)).ToListAsync();
 
-            Random rnd = new Random();
-            var listQuestion = new List<Questions>();
-            var nextQuestion = new Questions();
-            if (exam.Theta < 1)
-            {
-                listQuestion = await _context.Questions.Where(x => x.b < (-0.5) && !listIdAnsweredQuestion.Contains(x.ID)).ToListAsync();
-                var index = rnd.Next(0, listQuestion.Count);
-                nextQuestion = listQuestion[index];
-            }
-
-            else if (exam.Theta >= 1 && exam.Theta <2)
-            {
-                listQuestion = await _context.Questions.Where(x => x.b > (-0.4) && x.b < (1.5) && !listIdAnsweredQuestion.Contains(x.ID)).ToListAsync();
-                var index = rnd.Next(0, listQuestion.Count);
-                nextQuestion = listQuestion[index];
-            }
-            else
-            {
-                listQuestion = await _context.Questions.Where(x => x.b > (1.6) && !listIdAnsweredQuestion.Contains(x.ID)).ToListAsync();
-                var index = rnd.Next(0, listQuestion.Count);
-                nextQuestion = listQuestion[index];
-            }
-
-            if (listNewQuestion == null ||nextQuestion == null)
+            if (listNewQuestion == null )
                 return NoContent();
             if(listIdAnsweredQuestion.Count() == 1 || exam.StatusPreviousAnswer == rightAnswer)
             {
+                Random rnd = new Random();
+                var listQuestion = new List<Questions>();
+                var nextQuestion = new Questions();
+                if (exam.Theta < 1)
+                {
+                    listQuestion = await _context.Questions.Where(x => x.b < (-0.5) && !listIdAnsweredQuestion.Contains(x.ID)).ToListAsync();
+                    var index = rnd.Next(0, listQuestion.Count);
+                    nextQuestion = listQuestion[index];
+                }
+
+                else if (exam.Theta >= 1 && exam.Theta < 2)
+                {
+                    listQuestion = await _context.Questions.Where(x => x.b > (-0.4) && x.b < (1.5) && !listIdAnsweredQuestion.Contains(x.ID)).ToListAsync();
+                    var index = rnd.Next(0, listQuestion.Count);
+                    nextQuestion = listQuestion[index];
+                }
+                else
+                {
+                    listQuestion = await _context.Questions.Where(x => x.b > (1.6) && !listIdAnsweredQuestion.Contains(x.ID)).ToListAsync();
+                    var index = rnd.Next(0, listQuestion.Count);
+                    nextQuestion = listQuestion[index];
+                }
+
                 if (rightAnswer == true)
                     exam.Theta += 0.15;
                 else
